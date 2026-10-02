@@ -65,17 +65,12 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    # 관리자(서버장 등)는 검사 예외 처리 (테스트 시 일반 유저 계정으로 테스트 필요)
-    if message.author.guild_permissions.administrator:
-        await bot.process_commands(message)
-        return
-
     now = datetime.datetime.now()
     user_id = message.author.id
     clean_content = message.content.replace(" ", "")  # 띄어쓰기 제거 후 검사
 
     # -------------------------------------------------------------
-    # [보안 1] 금지어 감지 ("씨발" 필터링)
+    # [보안 1] 금지어 감지 ("씨발" 필터링 - 관리자 포함 전체 대상)
     # -------------------------------------------------------------
     for bad_word in BAD_WORDS:
         if bad_word in clean_content:
