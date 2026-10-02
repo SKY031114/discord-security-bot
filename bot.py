@@ -2,20 +2,23 @@ import discord
 from discord.ext import commands
 import datetime
 import re
+import os
 
-# 1. 인텐트 설정
+# 1. 인텐트 설정 (메시지 내용 읽기 필수)
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# --- 보안 및 로그 설정값 ---
-# 📌 지정해주신 로그 채널 ID 적용
+# 📌 로그 채널 ID
 LOG_CHANNEL_ID = 1555532609524858982  
 
-# 금지어 목록
-BAD_WORDS = ["비속어1", "비속어2", "광고성문구"]
+# 📌 금지어 목록 ("씨발" 및 주요 욕설 포함)
+BAD_WORDS = [
+    "씨발", "시발", "씨바", "시바", "씨팔", "시팔", 
+    "개새끼", "병신", "존나", "지랄", "꺼져", "미친놈"
+]
 
 # 유저별 도배 방지 기록
 user_message_timestamps = {}
@@ -41,15 +44,18 @@ async def send_security_log(guild: discord.Guild, author: discord.User, reason: 
     embed.add_field(name="👤 대상 유저", value=f"{author.mention} (`{author.name}` / ID: `{author.id}`)", inline=False)
     embed.add_field(name="📌 감지 사유", value=f"`{reason}`", inline=True)
     embed.add_field(name="📍 발생 채널", value=f"<#{channel_id}>", inline=True)
-    embed.add_field(name="💬 원본 메시지 내용", value=f"```{content if content else '내용 없음 (첨부파일 등)'}```", inline=False)
+    embed.add_field(name="💬 원본 메시지 내용", value=f"```{content if content else '내용 없음'}```", inline=False)
     embed.set_footer(text="서버 보안 모니터링 시스템")
 
-    await log_channel.send(embed=embed)
+    try:
+        await log_channel.send(embed=embed)
+    except Exception as e:
+        print(f"[로그 전송 실패] {e}")
 
 
 @bot.event
 async def on_ready():
-    print(f"보안 봇 온라인 완료: {bot.user.name} ({bot.user.id})")
+    print(f"✅ 보안 봇 온라인 완료: {bot.user.name} ({bot.user.id})")
     await bot.change_presence(activity=discord.Game(name="서버 보안 감시 및 로그 기록 중"))
 
 
@@ -59,20 +65,25 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    # 관리자는 예외 처리
+    # 관리자(서버장 등)는 검사 예외 처리 (테스트 시 일반 유저 계정으로 테스트 필요)
     if message.author.guild_permissions.administrator:
         await bot.process_commands(message)
         return
 
     now = datetime.datetime.now()
     user_id = message.author.id
+    clean_content = message.content.replace(" ", "")  # 띄어쓰기 제거 후 검사
 
     # -------------------------------------------------------------
-    # [보안 1] 금지어 감지
+    # [보안 1] 금지어 감지 ("씨발" 필터링)
     # -------------------------------------------------------------
     for bad_word in BAD_WORDS:
-        if bad_word in message.content:
-            await message.delete()
+        if bad_word in clean_content:
+            try:
+                await message.delete()
+            except Exception as e:
+                print(f"메시지 삭제 권한 부족: {e}")
+
             await message.channel.send(
                 f"⚠️ {message.author.mention}님, 유해 단어가 포함되어 메시지가 삭제되었습니다.",
                 delete_after=5
@@ -91,7 +102,11 @@ async def on_message(message: discord.Message):
     # -------------------------------------------------------------
     discord_invite_pattern = r"(discord\.gg|discord\.com/invite)/[a-zA-Z0-9]+"
     if re.search(discord_invite_pattern, message.content):
-        await message.delete()
+        try:
+            await message.delete()
+        except:
+            pass
+
         await message.channel.send(
             f"🚫 {message.author.mention}님, 서버 초대 링크 홍보는 금지되어 있습니다.",
             delete_after=5
@@ -119,7 +134,11 @@ async def on_message(message: discord.Message):
     user_message_timestamps[user_id] = timestamps
 
     if len(timestamps) >= SPAM_THRESHOLD_COUNT:
-        await message.delete()
+        try:
+            await message.delete()
+        except:
+            pass
+
         await message.channel.send(
             f"🚨 {message.author.mention}님, 도배가 감지되었습니다. 천천히 채팅해 주세요!",
             delete_after=5
@@ -152,7 +171,6 @@ async def clear_messages(ctx, amount: int = 10):
 @bot.command(name="타임아웃")
 @commands.has_permissions(moderate_members=True)
 async def timeout_member(ctx, member: discord.Member, days: int = 1, *, reason: str = "사유 없음"):
-    # 최대 3일 제한 검증
     if days < 1 or days > 3:
         await ctx.send("❌ 타임아웃 기간은 최소 1일, 최대 3일까지만 설정할 수 있습니다.", delete_after=5)
         return
@@ -161,7 +179,6 @@ async def timeout_member(ctx, member: discord.Member, days: int = 1, *, reason: 
     await member.timeout(duration, reason=reason)
     await ctx.send(f"⏳ {member.mention} 님에게 {days}일 동안 타임아웃을 부여했습니다. (사유: {reason})")
 
-    # 로그 채널에 타임아웃 기록
     log_channel = ctx.guild.get_channel(LOG_CHANNEL_ID)
     if log_channel:
         embed = discord.Embed(
@@ -192,8 +209,6 @@ async def permission_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("❌ 이 명령어를 사용할 권한이 없습니다.", delete_after=5)
 
-
-import os
 
 TOKEN = os.getenv("TOKEN")
 bot.run(TOKEN)
